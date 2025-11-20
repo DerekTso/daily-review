@@ -2,9 +2,13 @@ name: Daily Quote Push
 
 on:
   schedule:
-    # 分 时 日 月 周
+    # 北京时间 8:00, 12:00, 19:00
     - cron: '0 0,4,11 * * *'
   workflow_dispatch:
+
+# 必须加这个，允许 Action 修改仓库文件
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -21,12 +25,26 @@ jobs:
 
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
         pip install requests
 
     - name: Run script
       env:
-        #这里改了：把 Secrets 里的 TG 信息传给 Python
         TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
       run: python main.py
+
+    # 新增步骤：把 Python 修改后的 txt 文件提交回仓库
+    - name: Commit and Push changes
+      run: |
+        # 配置 git 用户（用 GitHub Actions bot 的身份）
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        
+        # 添加所有变动
+        git add .
+        
+        # 提交（如果文件没变化，git commit 会报错，所以加 || exit 0 忽略错误）
+        git commit -m "Update quotes status [skip ci]" || exit 0
+        
+        # 推送
+        git push
