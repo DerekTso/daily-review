@@ -1,6 +1,7 @@
 import os
 import random
 import requests
+import datetime
 
 def send_telegram_message(message):
     token = os.environ.get("TG_BOT_TOKEN")
@@ -13,7 +14,7 @@ def send_telegram_message(message):
     payload = {
         "chat_id": chat_id,
         "text": message,
-        "parse_mode": "Markdown"
+        "parse_mode": "Markdown" # 依然支持 Markdown
     }
     try:
         res = requests.post(url, data=payload)
@@ -21,75 +22,101 @@ def send_telegram_message(message):
     except:
         return False
 
-def main():
-    # 1. 读取待复习列表
-    quotes_file = 'quotes.txt'
-    used_file = 'used_quotes.txt' # 用来存已发过的
+def get_segments_from_file(filename):
+    """
+    读取文件，按空行分割成段落列表
+    """
+    if not os.path.exists(filename):
+        return []
     
-    # 如果文件不存在，创建空文件防止报错
-    if not os.path.exists(quotes_file):
-        open(quotes_file, 'w').close()
-    if not os.path.exists(used_file):
-        open(used_file, 'w').close()
+    with open(filename, 'r', encoding='utf-8') as f:
+        content = f.read()
+    
+    # 核心逻辑：使用双换行符分割
+    # split('\n\n') 会根据空行切分
+    # 如果你的空行里包含空格，可以用正则，但简单场景下 strip() 足够
+    segments = content.split('\n\n')
+    
+    # 清理数据：去除每个段落首尾的空白，并过滤掉纯空段落
+    cleaned_segments = [seg.strip() for seg in segments if seg.strip()]
+    
+    return cleaned_segments
 
-    with open(quotes_file, 'r', encoding='utf-8') as f:
-        lines = [line.strip() for line in f.readlines() if line.strip()]
+def save_segments_to_file(filename, segments):
+    """
+    将段落列表保存回文件，段落之间用两个换行符连接
+    """
+    with open(filename, 'w', encoding='utf-8') as f:
+        # join 的时候加上 \n\n 恢复空行格式
+        f.write('\n\n'.join(segments))
 
-    # 2. 检查是否还有库存
-    if not lines:
-        print("待复习列表已空，正在从已复习列表(used_quotes.txt)回填...")
-        # 从 used 回填到 quotes
-        with open(used_file, 'r', encoding='utf-8') as f:
-            used_lines = [line.strip() for line in f.readlines() if line.strip()]
+def main():
+    # 文件名配置
+    quotes_file = 'quotes.txt'
+    used_file = 'used_quotes.txt'
+    
+    # 1. 读取数据
+    # 注意：现在得到的 lines 其实是 blocks (段落块)
+    blocks = get_segments_from_file(quotes_file)
+    
+    # 2. 检查库存与循环逻辑
+    if not blocks:
+        print("主库已空，正在从 used 库回填...")
+        used_blocks = get_segments_from_file(used_file)
         
-        if not used_lines:
-            print("错误：两个列表都空了，请手动添加内容。")
-            send_telegram_message("⚠️ 题库已空，请去 GitHub 添加新内容！")
+        if not used_blocks:
+            print("错误：两个库都空了。")
+            send_telegram_message("⚠️ 题库已空，请添加内容！")
             return
-
-        # 重置文件
-        lines = used_lines
-        with open(quotes_file, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(lines))
+            
+        # 回填
+        blocks = used_blocks
+        save_segments_to_file(quotes_file, blocks)
         # 清空 used 文件
         open(used_file, 'w').close()
-        
-        print("回填完毕，重新开始循环。")
+        print("回填完毕。")
 
-    # 3. 随机抽取一条
-    picked_quote = random.choice(lines)
+    # 3. 随机抽取
+    picked_block = random.choice(blocks)
     
-    # 4. 发送
-    # 根据时间判断是早/中/晚 (仅用于显示文案，可选)
-    import datetime
-    hour = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).hour
+    # 4. 确定当前时间段 (装饰用)
+    utc_now = datetime.datetime.now(datetime.timezone.utc)
+    beijing_now = utc_now + datetime.timedelta(hours=8)
+    hour = beijing_now.hour
+    
     if hour < 10:
-        period = "☀️ 早晨"
+        icon = "☀️ 早安复习"
     elif hour < 14:
-        period = "🍱 中午"
+        icon = "🍱 午间充电"
     else:
-        period = "🌙 晚上"
+        icon = "🌙 晚安回顾"
 
-    msg = f"{period}复习：\n\n{picked_quote}"
-    success = send_telegram_message(msg)
+    # 5. 构造消息
+    # picked_block 本身就是一大段带换行的文本，直接拼接即可
+    final_msg = f"*{icon}*\n\n{picked_block}"
+    
+    # 6. 发送
+    success = send_telegram_message(final_msg)
 
     if success:
-        print(f"发送成功: {picked_quote}")
+        print("发送成功")
         
-        # 5. 数据迁移（关键步骤：不重复的核心）
-        # 从 lines 中移除这一条
-        lines.remove(picked_quote)
+        # 7. 移动数据 (防重复逻辑)
+        blocks.remove(picked_block) # 从主库移除
         
-        # 重写 quotes.txt (剩下的)
-        with open(quotes_file, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(lines))
-            
-        # 追加到 used_quotes.txt (已用的)
+        # 重新写入主库
+        save_segments_to_file(quotes_file, blocks)
+        
+        # 追加到 used 库 (注意要先读旧的，或者直接追加模式)
+        # 为了保持格式整洁，建议用追加模式写入，并补上换行
         with open(used_file, 'a', encoding='utf-8') as f:
-            f.write(picked_quote + '\n')
+            # 如果文件不为空，先加个空行
+            if os.path.getsize(used_file) > 0:
+                f.write('\n\n')
+            f.write(picked_block)
             
     else:
-        print("发送失败，不修改文件，下次重试")
+        print("发送失败，不修改文件")
 
 if __name__ == "__main__":
     main()
