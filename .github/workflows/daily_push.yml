@@ -1,0 +1,31 @@
+name: Daily Quote Push
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # 每天 UTC 0点 (北京时间早上8点)
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests
+
+    - name: Run script
+      env:
+        #这里改了：把 Secrets 里的 TG 信息传给 Python
+        TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+        TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+      run: python main.py
