@@ -2,7 +2,8 @@ name: Daily Quote Push
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # 每天 UTC 0点 (北京时间早上8点)
+    # 分 时 日 月 周
+    - cron: '0 0,4,11 * * *'
   workflow_dispatch:
 
 jobs:
