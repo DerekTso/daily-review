@@ -232,7 +232,7 @@ def main():
         print("正在请求 AI 分析...")
         ai_feedback = get_ai_analysis(picked_new['content'])
         if ai_feedback:
-            msg_parts.append(f"\n\n{ai_feedback}")
+            msg_parts.append(f"\n{ai_feedback}")
 
         # === 🎤 VIP 功能：发送 TTS 语音 ===
         print("正在生成语音...")
