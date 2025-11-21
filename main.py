@@ -47,7 +47,7 @@ def send_telegram_message(message):
         print(f"❌ 网络请求异常: {e}")
         return False
 
-def send_telegram_audio(file_path, caption=""):
+def send_telegram_audio(file_path, caption="", title="今日新知朗读"):
     token = os.environ.get("TG_BOT_TOKEN")
     chat_id = os.environ.get("TG_CHAT_ID")
     
@@ -61,7 +61,7 @@ def send_telegram_audio(file_path, caption=""):
             files = {'audio': audio}
             # 截取 caption 长度防止超过 Telegram 限制 (1024字符)
             safe_caption = caption[:1000] + "..." if len(caption) > 1000 else caption
-            data = {'chat_id': chat_id, 'title': '今日新知朗读', 'performer': 'Derek', 'caption': safe_caption}
+            data = {'chat_id': chat_id, 'title': title, 'performer': 'Derek', 'caption': safe_caption}
             res = requests.post(url, files=files, data=data)
             
         if res.status_code == 200:
@@ -99,15 +99,18 @@ def get_ai_analysis(text):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key={api_key}"
     
     prompt = f"""
-    请阅读下面这段话，提取出 3-5 个最核心的关键词或短语。
-    
+    请阅读下面这段话，完成两项任务：
+    1. 提取 3-5 个最核心的关键词（#Tag 风格）。
+    2. 为这段话生成一个精炼简短的标题（不超过10个字）。
+
+    请直接返回纯 JSON 字符串，不要包含 ```json 等 Markdown 标记：
+    {{
+        "keywords": "#关键词1 #关键词2 #关键词3",
+        "title": "这里是标题"
+    }}
+
     内容：
     “{text}”
-
-    要求：
-    1. 不要进行解释或解读，只输出关键词。
-    2. 格式为一行，用 Hashtag (#) 开头，中间用空格隔开。
-    例如：#关键词1 #关键词2 #关键词3
     """
 
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
@@ -115,12 +118,17 @@ def get_ai_analysis(text):
     try:
         response = requests.post(url, json=payload, timeout=10)
         if response.status_code == 200:
-            return response.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+            raw_text = response.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+            # 清洗可能存在的 Markdown 标记
+            clean_text = raw_text.replace('```json', '').replace('```', '').strip()
+            
+            return json.loads(clean_text)
         else:
             print(f"⚠️ AI API 调用失败 (Status {response.status_code}): {response.text}")
             return ""
-    except:
-        return ""
+    except Exception as e:
+        print(f"⚠️ AI 解析异常: {e}")
+        return None
 
 def generate_weekly_report(data):
     total_cards = len(data)
@@ -226,7 +234,15 @@ def main():
         msg_parts.append(f"【{title}】\n\n{picked_new['content']}")
         
         print("正在请求 AI 分析...")
-        ai_feedback = get_ai_analysis(picked_new['content'])
+        ai_result = get_ai_analysis(picked_new['content'])
+        
+        # 设置默认值
+        ai_keywords = ""
+        ai_title = "今日新知朗读"
+        
+        if ai_result and isinstance(ai_result, dict):
+            ai_keywords = ai_result.get("keywords", "")
+            ai_title = ai_result.get("title", "今日新知朗读")
         
         # [修改点1] 删除了将 ai_feedback 加入文本消息的逻辑
         # if ai_feedback:
@@ -238,11 +254,11 @@ def main():
         audio_file = "speech.mp3"
         
         # [修改点2] 将 AI 反馈作为语音的 Caption
-        audio_caption = ai_feedback if ai_feedback else "🎧 今日新知伴读"
+        audio_caption = ai_keywords if ai_keywords else "🎧 今日新知伴读"
         
         if generate_tts_audio(tts_text, audio_file):
             print("语音生成完毕，正在发送...")
-            send_telegram_audio(audio_file, caption=audio_caption)
+            send_telegram_audio(audio_file, caption=audio_caption, title=ai_title)
             if os.path.exists(audio_file):
                 os.remove(audio_file)
         # ===============================================
