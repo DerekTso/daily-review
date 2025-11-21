@@ -61,7 +61,7 @@ def send_telegram_audio(file_path, caption=""):
             files = {'audio': audio}
             # 截取 caption 长度防止超过 Telegram 限制 (1024字符)
             safe_caption = caption[:1000] + "..." if len(caption) > 1000 else caption
-            data = {'chat_id': chat_id, 'title': '今日新知朗读', 'caption': safe_caption}
+            data = {'chat_id': chat_id, 'title': '今日新知朗读', 'performer': 'Derek', 'caption': safe_caption}
             res = requests.post(url, files=files, data=data)
             
         if res.status_code == 200:
@@ -99,19 +99,15 @@ def get_ai_analysis(text):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key={api_key}"
     
     prompt = f"""
-    请阅读下面这段话，提取出 3 个最核心的关键词或概念。
-    并为每个关键词写一句极简短的“解码”（解释它在这段话里的深层含义，不超过15个字）。
-
+    请阅读下面这段话，提取出 3-5 个最核心的关键词或短语。
+    
     内容：
     “{text}”
 
     要求：
-    1. 格式严格如下，不要Markdown标题，不要废话：
-    - 关键词1：解码内容
-    - 关键词2：解码内容
-    - 关键词3：解码内容
-
-    2. 解码内容要深刻且精炼，直击本质。
+    1. 不要进行解释或解读，只输出关键词。
+    2. 格式为一行，用 Hashtag (#) 开头，中间用空格隔开。
+    例如：#关键词1 #关键词2 #关键词3
     """
 
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
@@ -238,7 +234,7 @@ def main():
 
         # === 🎤 发送 TTS 语音 (Caption 放 AI Feedback) ===
         print("正在生成语音...")
-        tts_text = picked_new['content'][:300] 
+        tts_text = picked_new['content'][:300].replace('*', '').replace('-', '')
         audio_file = "speech.mp3"
         
         # [修改点2] 将 AI 反馈作为语音的 Caption
