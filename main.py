@@ -130,6 +130,77 @@ def get_ai_analysis(text):
         print(f"⚠️ AI 解析异常: {e}")
         return None
 
+# --- 新增函数：从录入 Bot 获取新笔记 ---
+def fetch_and_save_new_quotes():
+    """
+    检查录入 Bot 的新消息，追加到 quotes.txt
+    """
+    # 获取录入 Bot 的 Token
+    input_token = os.environ.get("INPUT_BOT_TOKEN")
+    # 获取你的 Chat ID，用来验证身份，只收你发给机器人的消息
+    my_chat_id = os.environ.get("TG_CHAT_ID") 
+
+    if not input_token:
+        print("⚠️ 未找到 INPUT_BOT_TOKEN，跳过录入检查")
+        return 0
+
+    url = f"https://api.telegram.org/bot{input_token}/getUpdates"
+    
+    try:
+        # 获取更新
+        res = requests.get(url, timeout=10)
+        if res.status_code != 200:
+            print(f"⚠️ 获取 Update 失败: {res.text}")
+            return 0
+        
+        updates = res.json().get('result', [])
+        if not updates:
+            return 0
+
+        new_quotes = []
+        max_update_id = 0
+
+        for u in updates:
+            update_id = u['update_id']
+            max_update_id = max(max_update_id, update_id)
+            
+            # 提取消息文本
+            if 'message' in u:
+                msg = u['message']
+                # 验证发送者 ID (防止陌生人给你录入)
+                sender_id = str(msg.get('chat', {}).get('id', ''))
+                target_id = str(my_chat_id)
+                
+                if sender_id == target_id and 'text' in msg:
+                    text = msg['text'].strip()
+                    if text:
+                        new_quotes.append(text)
+
+        if new_quotes:
+            print(f"📥 发现 {len(new_quotes)} 条新笔记，正在写入...")
+            
+            # 追加写入 quotes.txt
+            with open(QUOTES_FILE, 'a', encoding='utf-8') as f:
+                # 确保文件末尾有换行符，防止内容粘连
+                f.write('\n\n') 
+                f.write('\n\n'.join(new_quotes))
+            
+            # 关键：发送请求确认这些 update_id 已处理 (Offset + 1)
+            # 这样下次就不会重复获取了
+            requests.get(f"{url}?offset={max_update_id + 1}")
+            
+            return len(new_quotes)
+            
+        # 即使没有有效文本，也要清空队列（比如你发了表情包）
+        if max_update_id > 0:
+            requests.get(f"{url}?offset={max_update_id + 1}")
+            
+        return 0
+
+    except Exception as e:
+        print(f"⚠️ 录入检查出错: {e}")
+        return 0
+
 def generate_weekly_report(data):
     total_cards = len(data)
     if total_cards == 0: return ""
@@ -193,6 +264,13 @@ def save_data(data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 def main():
+    # --- 1. 先检查有没有新录入的笔记 ---
+    # 如果有新录入，先写入文件，然后再 load_data，这样今天就能复习到刚录入的
+    added_count = fetch_and_save_new_quotes()
+    if added_count > 0:
+        print(f"📥 **自动剪藏助手**\n已成功收录 {added_count} 条新灵感！\n(将在今日或明日安排复习)")
+
+    # --- 2. 常规复习流程 ---
     data = load_data()
     beijing_time = get_beijing_time()
     today_str = beijing_time.strftime('%Y-%m-%d')
