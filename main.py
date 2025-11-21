@@ -53,7 +53,7 @@ def get_ai_analysis(text):
         return ""
 
     # 使用 Gemini 1.5 Flash 模型
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key={api_key}"
     
     prompt = f"""
     请阅读下面这段话，提取出 3 个最核心的关键词或概念。
