@@ -25,7 +25,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        pip install requests
+        pip install requests edge-tts
 
     - name: Run script
       env:
