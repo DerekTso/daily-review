@@ -7,19 +7,17 @@ from datetime import datetime, timedelta, timezone
 
 # --- 配置区域 ---
 QUOTES_FILE = 'quotes.txt'
-DB_FILE = 'memory.json' # 用来存储记忆状态的数据库文件
-
-# 记忆曲线间隔 (天数): 第1次1天后，第2次2天后，第3次4天后...
-INTERVALS = [1, 2, 4, 7, 15, 30, 60]
+DB_FILE = 'memory.json'
+MAX_REVIEW_COUNT = 5  # 每天每次推送最多包含几条复习内容（防止消息太长）
+INTERVALS = [1, 2, 4, 7, 15, 30, 60] # 记忆曲线间隔(天)
 
 def get_beijing_today():
-    """获取北京时间今天的日期字符串 (YYYY-MM-DD)"""
+    """获取北京时间今天的日期字符串"""
     utc_now = datetime.now(timezone.utc)
     beijing_now = utc_now + timedelta(hours=8)
     return beijing_now.strftime('%Y-%m-%d')
 
 def send_telegram_message(message):
-    """发送消息到 Telegram"""
     token = os.environ.get("TG_BOT_TOKEN")
     chat_id = os.environ.get("TG_CHAT_ID")
     
@@ -28,7 +26,7 @@ def send_telegram_message(message):
         return False
         
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    # 使用纯文本发送，避免格式报错，体验最稳
+    # 坚持使用纯文本发送，最稳妥
     payload = {
         "chat_id": chat_id,
         "text": message
@@ -46,21 +44,13 @@ def send_telegram_message(message):
         return False
 
 def load_data():
-    """
-    加载数据：
-    1. 读取 quotes.txt (作为数据源输入)
-    2. 读取 memory.json (作为状态记录)
-    3. 将 txt 里的新内容合并进 json 库
-    """
-    # 1. 读取 txt 原文
+    """加载数据并同步 quotes.txt 的新内容"""
     txt_segments = []
     if os.path.exists(QUOTES_FILE):
         with open(QUOTES_FILE, 'r', encoding='utf-8') as f:
             content = f.read()
-        # 按空行分割
         txt_segments = [seg.strip() for seg in content.split('\n\n') if seg.strip()]
 
-    # 2. 读取 json 数据库
     db_data = {}
     if os.path.exists(DB_FILE):
         try:
@@ -69,28 +59,19 @@ def load_data():
         except:
             db_data = {}
 
-    # 3. 同步：如果 txt 有新内容，加入 db；如果 txt 删了内容，保留 db (防止学习进度丢失)
-    # 使用内容的哈希值作为 ID，防止重复添加
-    current_ids = set()
-    
+    # 同步新内容
     for segment in txt_segments:
-        # 生成唯一ID (MD5)
         seg_id = hashlib.md5(segment.encode('utf-8')).hexdigest()
-        current_ids.add(seg_id)
-        
         if seg_id not in db_data:
-            # 这是一个新段落
             db_data[seg_id] = {
                 "content": segment,
-                "level": 0,          # 0表示没学过
-                "next_review": None, # 下次复习时间
+                "level": 0,
+                "next_review": None,
                 "id": seg_id
             }
-    
     return db_data
 
 def save_data(data):
-    """保存数据库"""
     with open(DB_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
@@ -102,80 +83,89 @@ def main():
         print("⚠️ 数据库为空，请先在 quotes.txt 添加内容")
         return
 
-    # --- 筛选候选池 ---
-    # 1. 待学习的新卡片 (Level 0)
+    # 1. 筛选候选池
     new_items = [item for item in data.values() if item['level'] == 0]
     
-    # 2. 待复习的旧卡片 (Level > 0 且 日期 <= 今天)
-    review_items = [
+    # 筛选所有“今天或之前”到期的复习卡片
+    review_candidates = [
         item for item in data.values() 
         if item['level'] > 0 and item['next_review'] and item['next_review'] <= today
     ]
 
-    # --- 抽取策略 ---
+    # 2. 抽取策略
     picked_new = None
-    picked_review = None
+    picked_reviews = []
 
-    # 必选一条新的 (如果没有新的，就不选)
+    # A. 必选一条新的 (如果有)
     if new_items:
         picked_new = random.choice(new_items)
     
-    # 选一条复习的 (如果有很多到期的，随机抽一条)
-    if review_items:
-        picked_review = random.choice(review_items)
+    # B. 选出待复习的 (最多 MAX_REVIEW_COUNT 条)
+    if review_candidates:
+        # 先打乱顺序，避免每次都复习同一批积压的
+        random.shuffle(review_candidates)
+        picked_reviews = review_candidates[:MAX_REVIEW_COUNT]
 
-    if not picked_new and not picked_review:
-        print("🎉 所有内容都已学完且今日无需复习！")
-        # 这种情况下，为了不让推送空着，可以随机来一条随便看看，或者直接不发
-        # 这里选择：随机随机来一条作为回顾
+    # 如果啥都没有
+    if not picked_new and not picked_reviews:
+        print("🎉 今日任务全部完成！随机抽取一条回顾...")
         all_items = list(data.values())
         if all_items:
-             picked_new = random.choice(all_items) # 假装它是新的，发出去看看
+             picked_new = random.choice(all_items) # 假装它是新的发出去
         else:
             return
 
-    # --- 构造消息 ---
+    # 3. 构造消息
     msg_parts = []
     
-    # 1. 顶部：今日新知 (或者今日精选)
+    # --- 顶部：新知 ---
     if picked_new:
-        icon = "🌱 今日新知" if picked_new['level'] == 0 else "🎲 随机漫步"
-        msg_parts.append(f"【{icon}】\n\n{picked_new['content']}")
+        title = "🌱 今日新知" if picked_new['level'] == 0 else "🎲 随机漫步"
+        msg_parts.append(f"【{title}】\n\n{picked_new['content']}")
     
-    # 2. 底部：复习回顾
-    if picked_review:
-        msg_parts.append("----------------------")
-        msg_parts.append(f"【🧠 记忆唤醒 · Level {picked_review['level']}】\n\n{picked_review['content']}")
-        msg_parts.append("\n(根据遗忘曲线自动推荐)")
+    # --- 底部：复习列表 ---
+    if picked_reviews:
+        msg_parts.append("\n----------------------")
+        msg_parts.append(f"🧠 今日复习 ({len(picked_reviews)}条)")
+        
+        for idx, item in enumerate(picked_reviews, 1):
+            # 为了阅读体验，如果内容太长，可以考虑截断，或者就直接发全本
+            # 这里选择发全本，但在每条前面加序号和等级
+            msg_parts.append(f"\n[{idx}] (Lv.{item['level']})\n{item['content']}")
+            
+        msg_parts.append("\n(根据艾宾浩斯曲线推荐)")
 
     final_msg = "\n".join(msg_parts)
     
-    print("正在发送...")
+    print(f"准备发送: 1条新知 + {len(picked_reviews)}条复习")
+    
+    # 4. 发送
     success = send_telegram_message(final_msg)
 
-    # --- 更新数据库状态 ---
+    # 5. 更新数据库
     if success:
-        print("✅ 发送成功，更新记忆进度...")
+        print("✅ 发送成功，更新进度...")
         
-        # 更新新卡片状态
+        # 更新新卡片
         if picked_new and picked_new['level'] == 0:
-            # 从 0 级升到 1 级，下次复习是 1 天后
             picked_new['level'] = 1
             next_date = datetime.strptime(today, '%Y-%m-%d') + timedelta(days=INTERVALS[0])
             picked_new['next_review'] = next_date.strftime('%Y-%m-%d')
             
-        # 更新复习卡片状态
-        if picked_review:
-            current_level = picked_review['level']
-            # 升级 (如果还没满级)
+        # 批量更新复习卡片
+        for item in picked_reviews:
+            current_level = item['level']
+            # 升级逻辑
             if current_level < len(INTERVALS):
-                days_add = INTERVALS[current_level] # 获取下一级间隔
-                picked_review['level'] += 1
+                days_add = INTERVALS[current_level]
+                item['level'] += 1
             else:
-                days_add = 60 # 满级后每60天复习一次
+                # 满级后固定间隔(比如60天)复习一次，或者你可以设置 items['level'] 不再增加
+                days_add = 60 
+                # item['level'] += 1 # 可选：是否继续增加等级数字
             
             next_date = datetime.strptime(today, '%Y-%m-%d') + timedelta(days=days_add)
-            picked_review['next_review'] = next_date.strftime('%Y-%m-%d')
+            item['next_review'] = next_date.strftime('%Y-%m-%d')
 
         save_data(data)
     else:
