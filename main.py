@@ -3,8 +3,8 @@ import json
 import random
 import requests
 import hashlib
-import asyncio # 新增：用于异步运行TTS
-import edge_tts # 新增：TTS库
+import asyncio
+import edge_tts
 from datetime import datetime, timedelta, timezone
 
 # --- 配置区域 ---
@@ -12,7 +12,10 @@ QUOTES_FILE = 'quotes.txt'
 DB_FILE = 'memory.json'
 MAX_REVIEW_COUNT = 3
 INTERVALS = [1, 2, 4, 7, 15, 30, 60]
-TTS_VOICE = "zh-CN-XiaoxiaoNeural" # 语音包：晓晓(女声)，也可换 zh-CN-YunxiNeural(男声)
+# 可选声音: 
+# zh-CN-YunxiNeural (男声，稳重)
+# zh-CN-XiaoxiaoNeural (女声，活泼)
+TTS_VOICE = "zh-CN-XiaoxiaoNeural"
 
 def get_beijing_time():
     """获取北京时间对象"""
@@ -44,7 +47,6 @@ def send_telegram_message(message):
         print(f"❌ 网络请求异常: {e}")
         return False
 
-# --- 新增：发送语音文件 ---
 def send_telegram_audio(file_path, caption=""):
     token = os.environ.get("TG_BOT_TOKEN")
     chat_id = os.environ.get("TG_CHAT_ID")
@@ -56,9 +58,10 @@ def send_telegram_audio(file_path, caption=""):
     
     try:
         with open(file_path, 'rb') as audio:
-            # sendAudio 需要用 multipart/form-data 上传文件
             files = {'audio': audio}
-            data = {'chat_id': chat_id, 'title': '今日新知朗读', 'caption': caption}
+            # 截取 caption 长度防止超过 Telegram 限制 (1024字符)
+            safe_caption = caption[:1000] + "..." if len(caption) > 1000 else caption
+            data = {'chat_id': chat_id, 'title': '今日新知朗读', 'caption': safe_caption}
             res = requests.post(url, files=files, data=data)
             
         if res.status_code == 200:
@@ -71,14 +74,13 @@ def send_telegram_audio(file_path, caption=""):
         print(f"❌ 发送语音异常: {e}")
         return False
 
-# --- 新增：生成 TTS 音频 ---
 async def run_tts(text, output_file):
     """异步执行 TTS 生成"""
     communicate = edge_tts.Communicate(text, TTS_VOICE)
     await communicate.save(output_file)
 
 def generate_tts_audio(text, output_file="speech.mp3"):
-    """同步包装函数，调用异步 TTS"""
+    """同步包装函数"""
     try:
         asyncio.run(run_tts(text, output_file))
         return True
@@ -96,7 +98,6 @@ def get_ai_analysis(text):
     # ⚠️ 如果运行报错 404，请检查模型名称是否准确
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key={api_key}"
     
-    # 使用【深度解码风】Prompt
     prompt = f"""
     请阅读下面这段话，提取出 3 个最核心的关键词或概念。
     并为每个关键词写一句极简短的“解码”（解释它在这段话里的深层含义，不超过15个字）。
@@ -106,7 +107,6 @@ def get_ai_analysis(text):
 
     要求：
     1. 格式严格如下，不要Markdown标题，不要废话：
-    【🔑 核心解码】
     - 关键词1：解码内容
     - 关键词2：解码内容
     - 关键词3：解码内容
@@ -143,19 +143,19 @@ def generate_weekly_report(data):
     progress_bar = "🟩" * filled_blocks + "⬜" * (10 - filled_blocks)
 
     report = f"""
-📅 **本周记忆周报**
-━━━━━━━━━━━━━━━━
-📚 **知识库总量**：{total_cards} 条
-
-📊 **记忆分布热力**：
-🌱 新知酝酿 (Lv.0)：{stats['new']}
-🌲 正在生根 (Lv.1-3)：{stats['learning']}
-🌳 枝繁叶茂 (Lv.4-6)：{stats['mastering']}
-🏛️ 永久收藏 (Lv.7+)：{stats['archived']}
-
-📈 **内化进度**：{mastery_rate:.1f}%
-{progress_bar}
-"""
+    📅 **本周记忆周报**
+    ━━━━━━━━━━━━━━━━
+    📚 **知识库总量**：{total_cards} 条
+    
+    📊 **记忆分布热力**：
+    🌱 新知酝酿 (Lv.0)：{stats['new']}
+    🌲 正在生根 (Lv.1-3)：{stats['learning']}
+    🌳 枝繁叶茂 (Lv.4-6)：{stats['mastering']}
+    🏛️ 永久收藏 (Lv.7+)：{stats['archived']}
+    
+    📈 **内化进度**：{mastery_rate:.1f}%
+    {progress_bar}
+    """
     return report
 
 def load_data():
@@ -221,31 +221,35 @@ def main():
         if all_items: picked_new = random.choice(all_items)
         else: return
 
-    # --- 构造并发送文本消息 ---
+    # --- 构造消息 ---
     msg_parts = []
     
-    # A. 新知 + AI
+    # A. 新知处理
     if picked_new:
         title = "🌱 今日新知" if picked_new['level'] == 0 else "🎲 随机漫步"
         msg_parts.append(f"【{title}】\n\n{picked_new['content']}")
         
         print("正在请求 AI 分析...")
         ai_feedback = get_ai_analysis(picked_new['content'])
-        if ai_feedback:
-            msg_parts.append(f"\n{ai_feedback}")
+        
+        # [修改点1] 删除了将 ai_feedback 加入文本消息的逻辑
+        # if ai_feedback:
+        #     msg_parts.append(f"\n\n{ai_feedback}")
 
-        # === 🎤 VIP 功能：发送 TTS 语音 ===
+        # === 🎤 发送 TTS 语音 (Caption 放 AI Feedback) ===
         print("正在生成语音...")
-        # 限制语音文本长度防止报错，只读前300字
         tts_text = picked_new['content'][:300] 
         audio_file = "speech.mp3"
+        
+        # [修改点2] 将 AI 反馈作为语音的 Caption
+        audio_caption = ai_feedback if ai_feedback else "🎧 今日新知伴读"
+        
         if generate_tts_audio(tts_text, audio_file):
             print("语音生成完毕，正在发送...")
-            send_telegram_audio(audio_file, caption="🎧 今日新知伴读")
-            # 发送完删除临时文件
+            send_telegram_audio(audio_file, caption=audio_caption)
             if os.path.exists(audio_file):
                 os.remove(audio_file)
-        # ===============================
+        # ===============================================
     
     # B. 复习列表
     if picked_reviews:
