@@ -26,7 +26,6 @@ def send_telegram_message(message):
         return False
         
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    # 保持纯文本发送，兼容性最好
     payload = {
         "chat_id": chat_id,
         "text": message
@@ -43,13 +42,62 @@ def send_telegram_message(message):
         print(f"❌ 网络请求异常: {e}")
         return False
 
+# --- 新增：AI 分析函数 ---
+def get_ai_analysis(text):
+    """
+    调用 Google Gemini API 对内容进行深度分析
+    """
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        print("⚠️ 未检测到 GEMINI_API_KEY，跳过 AI 分析")
+        return ""
+
+    # 使用 Gemini 1.5 Flash 模型
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    
+    prompt = f"""
+    请阅读下面这段话，提取出 3 个最核心的关键词或概念。
+    并为每个关键词写一句极简短的“解码”（解释它在这段话里的深层含义，不超过15个字）。
+
+    内容：
+    “{text}”
+
+    要求：
+    1. 格式严格如下，不要Markdown标题，不要废话：
+    🔑 核心解码：
+    • 关键词1 —— 解码内容
+    • 关键词2 —— 解码内容
+    • 关键词3 —— 解码内容
+
+    2. 解码内容要深刻且精炼，直击本质。
+    """
+
+    payload = {
+        "contents": [{
+            "parts": [{"text": prompt}]
+        }]
+    }
+
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        if response.status_code == 200:
+            result = response.json()
+            # 提取 AI 回复的文本
+            ai_text = result['candidates'][0]['content']['parts'][0]['text']
+            return ai_text.strip()
+        else:
+            print(f"⚠️ AI API 调用失败: {response.text}")
+            return ""
+    except Exception as e:
+        print(f"⚠️ AI 请求异常: {e}")
+        return ""
+
 def load_data():
     """加载数据并同步 quotes.txt 的新内容"""
     txt_segments = []
     if os.path.exists(QUOTES_FILE):
         with open(QUOTES_FILE, 'r', encoding='utf-8') as f:
             content = f.read()
-        # 按空行分割段落
         txt_segments = [seg.strip() for seg in content.split('\n\n') if seg.strip()]
 
     db_data = {}
@@ -60,7 +108,6 @@ def load_data():
         except:
             db_data = {}
 
-    # 同步新内容
     for segment in txt_segments:
         seg_id = hashlib.md5(segment.encode('utf-8')).hexdigest()
         if seg_id not in db_data:
@@ -84,36 +131,26 @@ def main():
         print("⚠️ 数据库为空，请先在 quotes.txt 添加内容")
         return
 
-    # 1. 筛选候选池
-    # 新卡片
+    # 1. 筛选
     new_items = [item for item in data.values() if item['level'] == 0]
     
-    # 复习卡片 (Level > 0 且日期 <= 今天)
     review_candidates = [
         item for item in data.values() 
         if item['level'] > 0 and item['next_review'] and item['next_review'] <= today
     ]
 
-    # 2. 抽取策略
+    # 2. 抽取
     picked_new = None
     picked_reviews = []
 
-    # A. 必选一条新的
     if new_items:
         picked_new = random.choice(new_items)
     
-    # B. 选出待复习的 (最多 MAX_REVIEW_COUNT 条)
     if review_candidates:
-        # 先随机打乱，确保每次从积压库里随机取
         random.shuffle(review_candidates)
-        # 截取前 N 条
         picked_reviews = review_candidates[:MAX_REVIEW_COUNT]
-        
-        # [修改点]：按 Level 从高到低排序 (reverse=True)
-        # 这样推送时，掌握程度高(Lv高)的内容会显示在前面
         picked_reviews.sort(key=lambda x: x['level'], reverse=True)
 
-    # 兜底：如果啥都没有
     if not picked_new and not picked_reviews:
         print("🎉 今日任务全部完成！随机抽取一条回顾...")
         all_items = list(data.values())
@@ -125,10 +162,18 @@ def main():
     # 3. 构造消息
     msg_parts = []
     
-    # --- 顶部：新知 ---
+    # --- 顶部：新知 + AI 分析 ---
     if picked_new:
         title = "🌱 今日新知" if picked_new['level'] == 0 else "🎲 随机漫步"
         msg_parts.append(f"【{title}】\n\n{picked_new['content']}")
+        
+        # === 💡 这里调用 AI 进行分析 ===
+        print("正在请求 AI 分析...")
+        ai_feedback = get_ai_analysis(picked_new['content'])
+        
+        if ai_feedback:
+            # 加一条分割线让排版更好看
+            msg_parts.append(f"\n----------------------\n{ai_feedback}")
     
     # --- 底部：复习列表 ---
     if picked_reviews:
@@ -136,10 +181,7 @@ def main():
         msg_parts.append(f"🧠 今日复习 ({len(picked_reviews)}条)")
         
         for idx, item in enumerate(picked_reviews, 1):
-            # 格式：[1] (Lv.5) 内容...
             msg_parts.append(f"\n[{idx}] (Lv.{item['level']})\n{item['content']}")
-            
-        # [修改点]：已删除底部的说明文字
 
     final_msg = "\n".join(msg_parts)
     
@@ -152,21 +194,17 @@ def main():
     if success:
         print("✅ 发送成功，更新进度...")
         
-        # 更新新卡片
         if picked_new and picked_new['level'] == 0:
             picked_new['level'] = 1
             next_date = datetime.strptime(today, '%Y-%m-%d') + timedelta(days=INTERVALS[0])
             picked_new['next_review'] = next_date.strftime('%Y-%m-%d')
             
-        # 批量更新复习卡片
         for item in picked_reviews:
             current_level = item['level']
-            # 升级逻辑
             if current_level < len(INTERVALS):
                 days_add = INTERVALS[current_level]
                 item['level'] += 1
             else:
-                # 满级后每60天复习一次
                 days_add = 60 
             
             next_date = datetime.strptime(today, '%Y-%m-%d') + timedelta(days=days_add)
