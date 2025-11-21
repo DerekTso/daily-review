@@ -3,13 +3,16 @@ import json
 import random
 import requests
 import hashlib
+import asyncio # 新增：用于异步运行TTS
+import edge_tts # 新增：TTS库
 from datetime import datetime, timedelta, timezone
 
 # --- 配置区域 ---
 QUOTES_FILE = 'quotes.txt'
 DB_FILE = 'memory.json'
-MAX_REVIEW_COUNT = 3  # 每次推送最多包含几条复习内容
-INTERVALS = [1, 2, 4, 7, 15, 30, 60] # 记忆曲线间隔(天)
+MAX_REVIEW_COUNT = 3
+INTERVALS = [1, 2, 4, 7, 15, 30, 60]
+TTS_VOICE = "zh-CN-XiaoxiaoNeural" # 语音包：晓晓(女声)，也可换 zh-CN-YunxiNeural(男声)
 
 def get_beijing_time():
     """获取北京时间对象"""
@@ -35,10 +38,52 @@ def send_telegram_message(message):
         if res.status_code == 200:
             return True
         else:
-            print(f"❌ Telegram API 报错: {res.text}")
+            print(f"❌ Telegram Text API 报错: {res.text}")
             return False
     except Exception as e:
         print(f"❌ 网络请求异常: {e}")
+        return False
+
+# --- 新增：发送语音文件 ---
+def send_telegram_audio(file_path, caption=""):
+    token = os.environ.get("TG_BOT_TOKEN")
+    chat_id = os.environ.get("TG_CHAT_ID")
+    
+    if not token or not chat_id:
+        return False
+        
+    url = f"https://api.telegram.org/bot{token}/sendAudio"
+    
+    try:
+        with open(file_path, 'rb') as audio:
+            # sendAudio 需要用 multipart/form-data 上传文件
+            files = {'audio': audio}
+            data = {'chat_id': chat_id, 'title': '今日新知朗读', 'caption': caption}
+            res = requests.post(url, files=files, data=data)
+            
+        if res.status_code == 200:
+            print("✅ 语音发送成功")
+            return True
+        else:
+            print(f"❌ Telegram Audio API 报错: {res.text}")
+            return False
+    except Exception as e:
+        print(f"❌ 发送语音异常: {e}")
+        return False
+
+# --- 新增：生成 TTS 音频 ---
+async def run_tts(text, output_file):
+    """异步执行 TTS 生成"""
+    communicate = edge_tts.Communicate(text, TTS_VOICE)
+    await communicate.save(output_file)
+
+def generate_tts_audio(text, output_file="speech.mp3"):
+    """同步包装函数，调用异步 TTS"""
+    try:
+        asyncio.run(run_tts(text, output_file))
+        return True
+    except Exception as e:
+        print(f"⚠️ TTS 生成失败: {e}")
         return False
 
 def get_ai_analysis(text):
@@ -62,7 +107,6 @@ def get_ai_analysis(text):
     要求：
     1. 格式严格如下，不要Markdown标题，不要废话：
     【🔑 核心解码】
-    
     - 关键词1：解码内容
     - 关键词2：解码内容
     - 关键词3：解码内容
@@ -77,21 +121,16 @@ def get_ai_analysis(text):
         if response.status_code == 200:
             return response.json()['candidates'][0]['content']['parts'][0]['text'].strip()
         else:
-            # 打印错误信息方便调试模型名称是否正确
             print(f"⚠️ AI API 调用失败 (Status {response.status_code}): {response.text}")
             return ""
     except:
         return ""
 
-# --- 生成周报 ---
 def generate_weekly_report(data):
-    """生成文本形式的周报仪表盘"""
     total_cards = len(data)
-    if total_cards == 0:
-        return ""
+    if total_cards == 0: return ""
 
     stats = {"new": 0, "learning": 0, "mastering": 0, "archived": 0}
-    
     for item in data.values():
         lv = item['level']
         if lv == 0: stats["new"] += 1
@@ -100,11 +139,9 @@ def generate_weekly_report(data):
         else: stats["archived"] += 1
 
     mastery_rate = ((stats["mastering"] + stats["archived"]) / total_cards) * 100
-    
     filled_blocks = int(mastery_rate / 10)
     progress_bar = "🟩" * filled_blocks + "⬜" * (10 - filled_blocks)
 
-    # [修改点2] 删除了“本周寄语”
     report = f"""
 📅 **本周记忆周报**
 ━━━━━━━━━━━━━━━━
@@ -155,23 +192,18 @@ def main():
     data = load_data()
     beijing_time = get_beijing_time()
     today_str = beijing_time.strftime('%Y-%m-%d')
-    
-    # [修改点3] 周一早上 00:00 - 11:00 之间触发 (hour < 11)
     is_monday_morning = (beijing_time.weekday() == 0) and (beijing_time.hour < 11)
 
     if not data:
         print("⚠️ 数据库为空")
         return
 
-    # 1. 筛选
     new_items = [item for item in data.values() if item['level'] == 0]
-    
     review_candidates = [
         item for item in data.values() 
         if item['level'] > 0 and item['next_review'] and item['next_review'] <= today_str
     ]
 
-    # 2. 抽取
     picked_new = None
     picked_reviews = []
 
@@ -189,10 +221,10 @@ def main():
         if all_items: picked_new = random.choice(all_items)
         else: return
 
-    # 3. 构造消息
+    # --- 构造并发送文本消息 ---
     msg_parts = []
     
-    # --- A. 顶部：新知 + AI ---
+    # A. 新知 + AI
     if picked_new:
         title = "🌱 今日新知" if picked_new['level'] == 0 else "🎲 随机漫步"
         msg_parts.append(f"【{title}】\n\n{picked_new['content']}")
@@ -200,15 +232,28 @@ def main():
         print("正在请求 AI 分析...")
         ai_feedback = get_ai_analysis(picked_new['content'])
         if ai_feedback:
-            msg_parts.append(f"\n{ai_feedback}")
+            msg_parts.append(f"\n\n{ai_feedback}")
+
+        # === 🎤 VIP 功能：发送 TTS 语音 ===
+        print("正在生成语音...")
+        # 限制语音文本长度防止报错，只读前300字
+        tts_text = picked_new['content'][:300] 
+        audio_file = "speech.mp3"
+        if generate_tts_audio(tts_text, audio_file):
+            print("语音生成完毕，正在发送...")
+            send_telegram_audio(audio_file, caption="🎧 今日新知伴读")
+            # 发送完删除临时文件
+            if os.path.exists(audio_file):
+                os.remove(audio_file)
+        # ===============================
     
-    # --- B. 中部：复习列表 ---
+    # B. 复习列表
     if picked_reviews:
         msg_parts.append(f"\n\n🧠 今日复习 ({len(picked_reviews)}条)")
         for idx, item in enumerate(picked_reviews, 1):
             msg_parts.append(f"\n[{idx}] (Lv.{item['level']})\n{item['content']}")
 
-    # --- C. 底部：周一专属周报 ---
+    # C. 周报
     if is_monday_morning:
         print("📅 检测到周一早晨，正在生成周报...")
         report = generate_weekly_report(data)
@@ -216,12 +261,11 @@ def main():
             msg_parts.append("\n\n" + report)
 
     final_msg = "\n".join(msg_parts)
-    print(f"准备发送消息...")
+    print(f"准备发送文本消息...")
     
-    # 4. 发送
     success = send_telegram_message(final_msg)
 
-    # 5. 更新
+    # 5. 更新数据库
     if success:
         print("✅ 发送成功，更新进度...")
         if picked_new and picked_new['level'] == 0:
