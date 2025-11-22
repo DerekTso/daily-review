@@ -309,7 +309,7 @@ def main():
     # A. 新知处理
     if picked_new:
         title = "🌱 今日新知" if picked_new['level'] == 0 else "🎲 随机漫步"
-        msg_parts.append(f"【{title}】\n\n{picked_new['content']}")
+        msg_parts.append(f"{title}\n\n{picked_new['content']}")
         
         print("正在请求 AI 分析...")
         ai_result = get_ai_analysis(picked_new['content'])
@@ -343,7 +343,7 @@ def main():
     
     # B. 复习列表
     if picked_reviews:
-        msg_parts.append(f"\n\n🧠 今日复习 ({len(picked_reviews)}条)")
+        msg_parts.append(f"\n🧠 今日复习 ({len(picked_reviews)}条)")
         for idx, item in enumerate(picked_reviews, 1):
             msg_parts.append(f"\n[{idx}] (Lv.{item['level']})\n{item['content']}")
 
