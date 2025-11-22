@@ -130,42 +130,45 @@ def get_ai_analysis(text):
         print(f"⚠️ AI 解析异常: {e}")
         return None
 
-# --- 新增函数：从录入 Bot 获取新笔记 ---
+# --- [调试版] 从录入 Bot 获取新笔记 ---
 def fetch_and_save_new_quotes():
     """
-    检查录入 Bot 的新消息，追加到 quotes.txt
+    检查录入 Bot 的新消息，追加到 quotes.txt (带详细调试日志)
     """
-    # 获取录入 Bot 的 Token
     input_token = os.environ.get("INPUT_BOT_TOKEN")
-    # 获取你的 Chat ID，用来验证身份，只收你发给机器人的消息
     my_chat_id = os.environ.get("TG_CHAT_ID") 
 
+    print("🔍 [调试] 开始检查录入...")
+
     if not input_token:
-        print("⚠️ 未找到 INPUT_BOT_TOKEN，跳过录入检查")
+        print("⚠️ [调试] 未找到 INPUT_BOT_TOKEN")
         return 0
+    
+    # 打印 Chat ID 的前几位和类型，检查是否读取正确
+    print(f"🔍 [调试] 目标 Chat ID: {str(my_chat_id)}")
 
     url = f"https://api.telegram.org/bot{input_token}/getUpdates"
     
     try:
-        # 获取更新
         res = requests.get(url, timeout=10)
-
-        # === 自动修复逻辑开始 ===
-        if res.status_code == 409:
-            print("⚠️ 检测到 Webhook 冲突，正在自动执行 deleteWebhook...")
-            del_url = f"https://api.telegram.org/bot{input_token}/deleteWebhook"
-            requests.get(del_url)
-            # 删除后重试获取
-            print("🔄 重试获取 Updates...")
-            res = requests.get(url, timeout=10)
-        # === 自动修复逻辑结束 ===
         
+        # 自动修复 Webhook
+        if res.status_code == 409:
+            print("⚠️ [调试] Webhook 冲突，执行删除...")
+            requests.get(f"https://api.telegram.org/bot{input_token}/deleteWebhook")
+            res = requests.get(url, timeout=10)
+
         if res.status_code != 200:
-            print(f"⚠️ 获取 Update 失败: {res.text}")
+            print(f"⚠️ [调试] API 请求失败: {res.text}")
             return 0
         
         updates = res.json().get('result', [])
+        
+        # 关键调试点：打印收到了多少条消息
+        print(f"🔍 [调试] API 返回了 {len(updates)} 条更新")
+        
         if not updates:
+            print("ℹ️ [调试] 没有新消息。请确认：1.你刚才给录入Bot发消息了吗？ 2.是不是发错Bot了？")
             return 0
 
         new_quotes = []
@@ -175,41 +178,41 @@ def fetch_and_save_new_quotes():
             update_id = u['update_id']
             max_update_id = max(max_update_id, update_id)
             
-            # 提取消息文本
             if 'message' in u:
                 msg = u['message']
-                # 验证发送者 ID (防止陌生人给你录入)
                 sender_id = str(msg.get('chat', {}).get('id', ''))
                 target_id = str(my_chat_id)
+                text = msg.get('text', '').strip()
                 
-                if sender_id == target_id and 'text' in msg:
-                    text = msg['text'].strip()
+                # 关键调试点：打印每条消息的匹配情况
+                print(f"  👉 [消息] 发送者ID: '{sender_id}' | 目标ID: '{target_id}' | 内容: {text[:10]}...")
+                
+                if sender_id == target_id:
                     if text:
+                        print("     ✅ 身份匹配，内容有效，加入列表")
                         new_quotes.append(text)
+                    else:
+                        print("     ❌ 身份匹配，但不是文本消息 (可能是图片/表情)")
+                else:
+                    print("     ❌ 身份不匹配！请检查 Secrets 中的 TG_CHAT_ID 是否正确")
 
         if new_quotes:
-            print(f"📥 发现 {len(new_quotes)} 条新笔记，正在写入...")
-            
-            # 追加写入 quotes.txt
+            print(f"📥 [调试] 最终提取到 {len(new_quotes)} 条有效笔记，正在写入...")
             with open(QUOTES_FILE, 'a', encoding='utf-8') as f:
-                # 确保文件末尾有换行符，防止内容粘连
                 f.write('\n\n') 
                 f.write('\n\n'.join(new_quotes))
             
-            # 关键：发送请求确认这些 update_id 已处理 (Offset + 1)
-            # 这样下次就不会重复获取了
             requests.get(f"{url}?offset={max_update_id + 1}")
-            
             return len(new_quotes)
             
-        # 即使没有有效文本，也要清空队列（比如你发了表情包）
         if max_update_id > 0:
+            print("🧹 [调试] 清理无效/不匹配的消息队列...")
             requests.get(f"{url}?offset={max_update_id + 1}")
             
         return 0
 
     except Exception as e:
-        print(f"⚠️ 录入检查出错: {e}")
+        print(f"⚠️ [调试] 发生异常: {e}")
         return 0
 
 def generate_weekly_report(data):
