@@ -51,8 +51,11 @@ jobs:
         # 添加所有变动
         git add .
         
-        # 提交（如果文件没变化，git commit 会报错，所以加 || exit 0 忽略错误）
-        git commit -m "Update quotes status [skip ci]" || exit 0
+        # 如果没有变化，直接退出，不报错
+        git diff-index --quiet HEAD || git commit -m "Update [skip ci]"
+        
+        # 关键：先拉取最新代码并变基，解决潜在冲突
+        git pull --rebase origin main
         
         # 推送
         git push
