@@ -149,6 +149,17 @@ def fetch_and_save_new_quotes():
     try:
         # 获取更新
         res = requests.get(url, timeout=10)
+
+        # === 自动修复逻辑开始 ===
+        if res.status_code == 409:
+            print("⚠️ 检测到 Webhook 冲突，正在自动执行 deleteWebhook...")
+            del_url = f"https://api.telegram.org/bot{input_token}/deleteWebhook"
+            requests.get(del_url)
+            # 删除后重试获取
+            print("🔄 重试获取 Updates...")
+            res = requests.get(url, timeout=10)
+        # === 自动修复逻辑结束 ===
+        
         if res.status_code != 200:
             print(f"⚠️ 获取 Update 失败: {res.text}")
             return 0
