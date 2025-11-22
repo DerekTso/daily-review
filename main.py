@@ -80,12 +80,26 @@ async def run_tts(text, output_file):
     await communicate.save(output_file)
 
 def generate_tts_audio(text, output_file="speech.mp3"):
-    """同步包装函数"""
+    """同步包装函数 (带清理逻辑)"""
     try:
+        # 如果文件已存在，先删除，防止旧文件干扰
+        if os.path.exists(output_file):
+            os.remove(output_file)
+            
         asyncio.run(run_tts(text, output_file))
-        return True
+        
+        # 再次检查是否真的生成了文件且不为空
+        if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+            return True
+        else:
+            print("⚠️ TTS 文件生成失败或为空")
+            return False
+            
     except Exception as e:
-        print(f"⚠️ TTS 生成失败: {e}")
+        print(f"⚠️ TTS 生成异常: {e}")
+        # 如果生成过程中出错，确保清理掉可能残留的半成品
+        if os.path.exists(output_file):
+            os.remove(output_file)
         return False
 
 def get_ai_analysis(text):
@@ -348,11 +362,17 @@ def main():
         # [修改点2] 将 AI 反馈作为语音的 Caption
         audio_caption = ai_keywords if ai_keywords else "🎧 今日新知伴读"
         
-        if generate_tts_audio(tts_text, audio_file):
-            print("语音生成完毕，正在发送...")
-            send_telegram_audio(audio_file, caption=audio_caption, title=ai_title)
+        try:
+            if generate_tts_audio(tts_text, audio_file):
+                print(f"语音生成完毕，标题: {ai_title}，正在发送...")
+                send_telegram_audio(audio_file, caption=audio_caption, title=ai_title)
+            else:
+                print("⚠️ 跳过语音发送")
+        finally:
+            # 【关键修改】无论发送成功还是失败，最后都强制删除文件
             if os.path.exists(audio_file):
                 os.remove(audio_file)
+                print("🧹 已清理临时语音文件")
         # ===============================================
     
     # B. 复习列表
