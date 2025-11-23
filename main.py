@@ -3,8 +3,9 @@ import json
 import random
 import requests
 import hashlib
-import asyncio
-import edge_tts
+# import asyncio
+# import edge_tts
+from gtts import gTTS
 from datetime import datetime, timedelta, timezone
 
 # --- 配置区域 ---
@@ -15,7 +16,7 @@ INTERVALS = [1, 2, 4, 7, 15, 30, 60]
 # 可选声音: 
 # zh-CN-YunxiNeural (男声，稳重)
 # zh-CN-XiaoxiaoNeural (女声，活泼)
-TTS_VOICE = "zh-CN-XiaoxiaoNeural"
+# TTS_VOICE = "zh-CN-XiaoxiaoNeural"
 
 def get_beijing_time():
     """获取北京时间对象"""
@@ -74,21 +75,17 @@ def send_telegram_audio(file_path, caption="", title="今日新知朗读"):
         print(f"❌ 发送语音异常: {e}")
         return False
 
-async def run_tts(text, output_file):
-    """异步执行 TTS 生成"""
-    communicate = edge_tts.Communicate(text, TTS_VOICE)
-    await communicate.save(output_file)
-
 def generate_tts_audio(text, output_file="speech.mp3"):
-    """同步包装函数 (带清理逻辑)"""
+    """使用 gTTS 同步生成音频"""
     try:
-        # 如果文件已存在，先删除，防止旧文件干扰
         if os.path.exists(output_file):
             os.remove(output_file)
             
-        asyncio.run(run_tts(text, output_file))
+        print("🔊 正在调用 Google TTS...")
+        # lang='zh-cn' 代表简体中文
+        tts = gTTS(text=text, lang='zh-cn')
+        tts.save(output_file)
         
-        # 再次检查是否真的生成了文件且不为空
         if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
             return True
         else:
@@ -97,7 +94,6 @@ def generate_tts_audio(text, output_file="speech.mp3"):
             
     except Exception as e:
         print(f"⚠️ TTS 生成异常: {e}")
-        # 如果生成过程中出错，确保清理掉可能残留的半成品
         if os.path.exists(output_file):
             os.remove(output_file)
         return False
