@@ -26,13 +26,13 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install requests
+        pip install requests gTTS
         # 👇 关键修改：直接从 GitHub 安装最新开发版，解决 401 问题
         # pip install git+https://github.com/rany2/edge-tts.git
         
         # 👇 强制安装最新版 edge-tts 以解决 401 错误
         # pip install --force-reinstall "edge-tts>=6.1.9"
-        pip install git+https://github.com/rany2/edge-tts.git@master
+        # pip install git+https://github.com/rany2/edge-tts.git@master
         
     - name: Run script
       env:
