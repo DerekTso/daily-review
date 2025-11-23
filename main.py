@@ -3,9 +3,6 @@ import json
 import random
 import requests
 import hashlib
-# import asyncio
-# import edge_tts
-from gtts import gTTS
 from datetime import datetime, timedelta, timezone
 
 # --- 配置区域 ---
@@ -13,10 +10,9 @@ QUOTES_FILE = 'quotes.txt'
 DB_FILE = 'memory.json'
 MAX_REVIEW_COUNT = 3
 INTERVALS = [1, 2, 4, 7, 15, 30, 60]
-# 可选声音: 
-# zh-CN-YunxiNeural (男声，稳重)
-# zh-CN-XiaoxiaoNeural (女声，活泼)
-# TTS_VOICE = "zh-CN-XiaoxiaoNeural"
+# 新 API 的配置
+TTS_API_URL = "https://t.leftsite.cn/api/v1/tts"
+TTS_VOICE = "zh-CN-XiaoxiaoNeural"
 
 def get_beijing_time():
     """获取北京时间对象"""
@@ -75,21 +71,41 @@ def send_telegram_audio(file_path, caption="", title="今日新知朗读"):
         print(f"❌ 发送语音异常: {e}")
         return False
 
+# --- [关键修改] 使用第三方 API 生成音频 ---
 def generate_tts_audio(text, output_file="speech.mp3"):
-    """使用 gTTS 同步生成音频"""
+    """调用 t.leftsite.cn API 生成晓晓语音"""
     try:
         if os.path.exists(output_file):
             os.remove(output_file)
             
-        print("🔊 正在调用 Google TTS...")
-        # lang='zh-cn' 代表简体中文
-        tts = gTTS(text=text, lang='zh-cn')
-        tts.save(output_file)
+        print("🔊 正在请求 t.leftsite.cn API (晓晓)...")
         
-        if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
-            return True
+        # 构造请求参数
+        params = {
+            "text": text,
+            "voice": TTS_VOICE,
+            "rate": 0,
+            "pitch": 0,
+            "api_key": ""
+        }
+        
+        # 发送请求，stream=True 用于下载文件
+        res = requests.get(TTS_API_URL, params=params, stream=True, timeout=30)
+        
+        if res.status_code == 200:
+            # 写入文件
+            with open(output_file, 'wb') as f:
+                for chunk in res.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            
+            # 检查文件是否生成成功
+            if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                return True
+            else:
+                print("⚠️ TTS 文件虽然下载了但大小为0")
+                return False
         else:
-            print("⚠️ TTS 文件生成失败或为空")
+            print(f"⚠️ TTS API 请求失败: {res.status_code} - {res.text}")
             return False
             
     except Exception as e:
