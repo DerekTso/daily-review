@@ -26,7 +26,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install requests gTTS
+        pip install requests
         # 👇 关键修改：直接从 GitHub 安装最新开发版，解决 401 问题
         # pip install git+https://github.com/rany2/edge-tts.git
         
