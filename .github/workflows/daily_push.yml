@@ -31,7 +31,8 @@ jobs:
         # pip install git+https://github.com/rany2/edge-tts.git
         
         # 👇 强制安装最新版 edge-tts 以解决 401 错误
-        pip install --force-reinstall "edge-tts>=6.1.9"
+        # pip install --force-reinstall "edge-tts>=6.1.9"
+        pip install git+https://github.com/rany2/edge-tts.git@master
         
     - name: Run script
       env:
