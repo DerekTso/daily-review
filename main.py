@@ -258,17 +258,17 @@ def generate_weekly_report(data):
     progress_bar = "🟩" * filled_blocks + "⬜" * (10 - filled_blocks)
 
     report = f"""
-    📅 **本周记忆周报**
+    📅 本周记忆周报
     ━━━━━━━━━━━━━━━━
-    📚 **知识库总量**：{total_cards} 条
+    📚 知识库总量：{total_cards} 条
     
-    📊 **记忆分布热力**：
+    📊 记忆分布热力：
     🌱 新知酝酿 (Lv.0)：{stats['new']}
     🌲 正在生根 (Lv.1-3)：{stats['learning']}
     🌳 枝繁叶茂 (Lv.4-6)：{stats['mastering']}
     🏛️ 永久收藏 (Lv.7+)：{stats['archived']}
     
-    📈 **内化进度**：{mastery_rate:.1f}%
+    📈 内化进度：{mastery_rate:.1f}%
     {progress_bar}
     """
     return report
@@ -398,7 +398,7 @@ def main():
         print("📅 检测到周一早晨，正在生成周报...")
         report = generate_weekly_report(data)
         if report:
-            msg_parts.append("\n\n" + report)
+            msg_parts.append("\n" + report)
 
     final_msg = "\n".join(msg_parts)
     print(f"准备发送文本消息...")
