@@ -122,7 +122,7 @@ def get_ai_analysis(text):
         return ""
 
     # ⚠️ 如果运行报错 404，请检查模型名称是否准确
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key={api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key={api_key}"
     
     prompt = f"""
     请阅读下面这段话，完成两项任务：
